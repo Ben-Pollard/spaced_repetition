@@ -1,0 +1,189 @@
+---
+title: "Spaced Repetition"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+suppressMessages(lapply(c("dplyr","ggplot2","tidyr","knitr","zoo", "DiagrammeR"), library, character.only=T))
+theme_update(plot.title = element_text(hjust = 0.5))
+```
+
+
+Reinforcement learning algorithm for spaced repetition
+
+#Reinforcement learning
+$Q^*(s,a) = R(s,a) + \gamma \sum_{s' \in {\Bbb S}} P(s'|s,a)V^*(s')$  
+$\pi^*(s) = argmax Q^*(s,a)$
+
+##Models we need to build
+State transition model $P(s'|s,a)$  
+Expected reward model ${\Bbb E}_{(R|s,a)}$  
+The value model $V^*(s)$ is arrived at by iterating over actions and state transitions
+
+***   
+***
+#Reward metric
+
+##Definitions
+$P(s_w)$: probability of success at task for this word  
+${\Bbb W}$: words in users current vocab  
+$S$: success at task  
+$F$: failure at task  
+  
+##Fluency
+$$F = \sum_{w \in {\Bbb W}}P(S_w)$$
+Our reward metric is change in fluency which equals the change in the sum of probabilities of getting tasks for all words correct if posed now.  
+  
+
+$P(s_w)$ is modelled as an exponential decay since last asked (correctly answered?)
+$t_w$: time since word last asked (correctly?)   
+$\delta_w$: decay factor for this word  
+$$P(s_w) = e^{t_w\delta_w}$$
+where $\delta$ evaluates to a negative. Each word for each pesron will have its own decay factor. The goal of the algorithm is to get to a large set of words (vocab and grammatical learning items) ${\Bbb W}$, each with a somewhat flat decay curve (small $d$).
+```{r, echo=FALSE}
+t <- rep(seq(1,100),2)
+d <- c(rep(-0.05,100), rep(-0.001,100))
+df <- data.frame(t,d)
+df$p <- exp(df$t * df$d)
+ggplot(df, (aes(y=p, x=t))) + geom_line() + facet_grid(. ~ d) + 
+  ggtitle("Decay of P(s) for different values of decay factor d")
+
+```
+##Probability of success model
+$\delta$ can be derived from a GLM (binomial family, log link) where only second order factors and time are included and the intercept term is excluded.
+$$P(s) = e^{t(ax_1 + bx_2 + c)}$$  
+
+Building the model this way implies that $P(S)=1$ when the material has just been presented 
+
+The model is trained over the population
+
+Potential factors:
+* N success
+* N failure
+* Difficulty given the other words the user knows  
+  
+  The latter may change based on other words presented - we will want a method to reduce the amount of extra calculation this involves.
+
+##Change in fluency
+The reward for a single step (i.e. question/piece of content presented) is change in fluency $\Delta F$.
+```{r, echo=FALSE}
+ggplot(df %>% filter(d==-0.05 & t<=50), (aes(y=p, x=t))) + geom_line() + 
+  scale_x_continuous(breaks=c(0,25,50), labels = c("t0","t1","t2")) +
+  geom_segment(aes(x = 25, y = 0, xend = 25, yend = 0.2865048),linetype="dotted", colour="red") + 
+  geom_segment(aes(x = 0, y = 0.2865048, xend = 25, yend = 0.2865048),linetype="dotted", colour="red") + 
+  geom_segment(aes(x = 50, y = 0, xend = 50, yend = 0.082085),linetype="dashed", colour="blue") + 
+  geom_segment(aes(x = 0, y = 0.082085, xend = 50, yend = 0.082085),linetype="dashed", colour="blue") + 
+  ggtitle("Change in P(s) over time")
+```
+$P(S)$ changes with time, so the change in fluency depends on the $\Delta$ and $t$ of all the decay curves of all the words not presented as well as that which is presented.  
+$t0_w$: time word was last presented  
+$t1_w$: last time step   
+$t2_w$: now
+
+The amount of loss in $\sum_{w \in {W}} P(S)$ over one step is the sum of the loss between $t1$ and $t2$. We need to know when $t0$ was in order to calculate $\Delta \sum_{w \in {\Bbb W}} P(S)$.  
+The sum decay loss is: $$\sum_{w \in {\Bbb W}} e^{t2_w\delta_w} - e^{t1_w\delta_w}$$
+
+If we assume that $P(S)=1$ at $t0$, the contribution of the chosen word $w_c$ to $\Delta F$ is $1-P(Sw_c)$  
+Under the same assumption, adding a new word to ${\Bbb W}$ adds 1 to $\Delta F$.
+
+Under this assumption then: $$\Delta F = [\sum_{w \in {\Bbb W  -w_c}} P(S_w)] + 1  - P(Sw_c) + \Delta |{\Bbb W}|$$
+
+##Accounting for understanding / probability of success for new words
+In our fluency change equation we assume that the probability of getting a word right the moment after it is presented is $\sim 1$. This is a close enough approximation if the word has been understood - but new words have not yet been understood, and some words may only be partially understood. We need a way of choosing which new words to present next. Further, we need a way of modelling fluency for words which are not yet forgotten because they are only partially understood.  
+
+On first presentation $P(U_w)=0$. For the very first word presented to a user we want to present one that stands a good chance of being understood *soon* so we want to capture the fact that attempting a word that has a good chance of being understood is a step towards fluency. With our definition of fluency this is not directly possible - but given that we want to reflect future fluency we can ensure that it can be captured by the state value $V^*(s)$.  
+
+In order for $V^*(s)$ so be accurate, the state transition model needs to use actions that capture something about $P(U_w)$. If some actions are unavailable sometimes we can describe the conditions under which they were not available as insight into how best to develop the courses. It may be sufficient for the state to capture recent success and failure and recent presentations of old words and new words (previously understood, brand new, partially understood).  
+  
+Taking this approach there is no need to modify our fluency equation to be $\sum_{w \in {\Bbb W}} P(S)P(U)$ where P(U) is the probability of the user understanding the word. As the user learns new words, it has an effect on how likely they are to succeed on other words. A more complete (and expensive) model might re-evaluate every word at every step.  
+
+So how do we model $P(U)$?
+
+$\Bbb E(S_w)$ is the expected number of additional consecutive presentations of a word for it to become understood. This model should be able to capture the unlikeliness of a difficult word to be understood merely through repeated presentation (e.g. a long sentence composed of unfamiliar words). 
+
+####Introducing new content
+```{r, echo=FALSE}
+grViz("digraph rmarkdown {
+'1st Presenation' -> Guess
+Guess -> Correct
+Guess -> Confirm
+Correct -> '2nd Presentation'
+Confirm -> '2nd Presentation'
+}", height=200)
+```
+At what point do we consider a word has been understood?  
+
+Being in ${\Bbb W}$ is effectively a heuristic for $P(U_w)=1$.  
+
+We have a model $\Bbb E(S_w)$, so we can use some cutoff $P(U_w=1|{\Bbb W}) > c$.
+
+####Suppressing content that was presented prematurely
+We need some mechanism to remove terms that the user is not ready for. The removal itself can be performed as an action since the aim is to avoid annoying the user by presenting them with a term they don't yet have the basis of an understanding for. The particular word the action chooses can be based on $max\Bbb E(S_w)$.
+
+
+##Other
+Fluency metric could be weighted by common-ness of words/grammatical forms in a language.
+
+***
+
+#Expected reward model
+
+***  
+***
+#Defining Action
+Words can be presented in different ways - do we need to take into account learning modes?  
+
+Possible actions:
+Pick new word with $\Bbb E(S_w)<2$ (to increase $|\Bbb W|$)  
+Pick previously presented word with $\Bbb E(S_w)<2$ (to increase $|\Bbb W|$)  
+Pick understood word with $\min(P(S_w))$ (to increase $\sum_{w \in {\Bbb W}} P(S)$)  
+Pick understood word with medium $P(S_w)$ (for encouragement)  
+Where there is little available reward from learning, presenting other types of content may result in positive changes to $V^*(s)$.  
+Remove word from $\Bbb W$
+
+***
+
+#Defining State
+We need a fixed number of states that capture happiness to continue learning and likeliness to be able to keep increasing fluency, e.g.
+* Words added (all time/this session/rate)
+* Correct (this session/rate of change)
+
+The value of a given state $V^*(s)$ is likely to be different for different people. People may differ in these ways for example:
+* Preference for new material
+* Speed of uptake  
+* Mode preference
+  
+We can capture this by allowing the state to capture difference in people. This allows for people to change and for us to estimate the likelihood of that happening.
+
+***
+
+#State transition model
+
+***
+#Exploration vs. Exploitation
+
+***
+
+#Putting it together
+
+###Offline Training
+
+* Build probability of success model
+* Build expected reward model
+* Build state transition model
+* Find $V(s \in S)$ by performing value iteration.
+  + This requires a finite number of states and actions
+
+###Inference
+* At each step, for each user:
+* The user's state $s$ is known, therefore $V(s)$ is also known.
+* Score the probability of success model for each word $\delta$ won't have changed for all but one word, but $t$ will have.
+  + It may be possible to define a step-wise approach rather than this time-based one to allow for batch-calculation of $P(S_{w \in \Bbb W}$
+* To find $Q^*(a|s)$, iterate over available actions, plugging them into the reward and state transition models.
+  + Expected success plays a part in expected reward and probable state transition. We need to infer expected success for each word for each user for each step! However, the processing burden is relieved in part by the fact that the decay factor $\delta$ only changes for words that have been presented and for which we are calculating difficulty.
+
+###Metrics
+One of the benefits of being clear about what are good states to be in is that we can start to understand the extent to which those states are possible given the available actions. 
+* Assign each user a $S$ and ${\Bbb W}$
+* Find cases where chosen action not available. Describe $S$ and ${\Bbb W}$ for those users.
