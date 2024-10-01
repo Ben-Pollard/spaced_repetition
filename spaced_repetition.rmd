@@ -1,6 +1,9 @@
 ---
-title: "Spaced Repetition"
-output: html_notebook
+title: "Optimising Spaced Repetition for Second Language Learning with Reinforcement Learning - A Proposed Approach"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -8,40 +11,109 @@ knitr::opts_chunk$set(echo = TRUE)
 suppressMessages(lapply(c("dplyr","ggplot2","tidyr","knitr","zoo", "DiagrammeR"), library, character.only=T))
 theme_update(plot.title = element_text(hjust = 0.5))
 ```
-
-
-Reinforcement learning algorithm for spaced repetition
-
-#Reinforcement learning
-$Q^*(s,a) = R(s,a) + \gamma \sum_{s' \in {\Bbb S}} P(s'|s,a)V^*(s')$  
-$\pi^*(s) = argmax Q^*(s,a)$
-
-##Models we need to build
-State transition model $P(s'|s,a)$  
-Expected reward model ${\Bbb E}_{(R|s,a)}$  
-The value model $V^*(s)$ is arrived at by iterating over actions and state transitions
-
-***   
 ***
-#Reward metric
+# Introduction
+Spaced repetition is an approach used in language learning software to help with memorisation. It is based on the idea that with each re-presentation of the material, the time to forget that piece of material will grow longer.  
 
-##Definitions
-$P(s_w)$: probability of success at task for this word  
-${\Bbb W}$: words in users current vocab  
-$S$: success at task  
-$F$: failure at task  
+Reinforcement learning is a machine learing technique that incorporates feedback from the environment in which the algorithm operates. A typical example is for learning how to play video games - at each time step the learning agent takes a decision which determines the player's position within the environment and thus the available decisions to be taken in the next time step.  
+
+Given a language course, a person has an opportunity to apply themselves to any item in the course - taking on new material or revisiting old material. Their motivation might be affected by continued success and by advancement into the more complex parts of the course. Their success at a given item might be affected by how long ago they were last presented with a given item, how well they had previously understood that item. If taking on a new piece of material their success might depend on their success with certain pieces of related material.  
+
+Each choice of material to study represents a decision that affects a student's ongoing success and motivation. We explore how reinforcement learning might be used to optimise these decisions.  
+
+# Essentials of Reinforcement Learning
+### Notation
+* $s$: state
+    + summary of the learner's progress and acheivements
+* $s'$: next state
+    + what the state will be in the next time step
+* $a$: action
+    + which choice the algorithm takes for this time step with respect to which material the learner should see
+* $R$: reward
+    + the improvement in some metric of overall learning
+* $V(s')$: value of the next state
+    + expected total future reward from starting in the next state
+* $V^*$: optimal value
+    + value of taking the best available action in terms of the next reward
+* $Q$: quality of action
+    + the estimated long-term effect of the taking the chosen action given the current state on overall learning performance
+* $Q^*$: optimal quality
+* $\pi$: policy
+    + action to take given state
+* $\pi^*$: optimal policy
+    + policy that will result in the highest reward
+* $\gamma$: discount factor
+    + how much to discount future reward (how much to favour immediate reward)
+
+
+### Equations
+* Quality: $Q^*(s,a) = R(s,a) + \gamma \sum_{s' \in {\Bbb S}} P(s'|s,a)V^*(s')$  
+    + The optimal quality given the current state and action is equal to the direct reward, plus the time-discounted sum of the values of the possible states in the next step multiplied by the probability of being in each of those states in the next step.
+* Policy: $\pi^*(s) = argmax Q^*(s,a)$  
+    + The optimal policy is to choose the action that optimises the quality given the state.
+    
+    
+### Required Definitions in the Language Learning Context
+Given the above definitions, our task is to define what the notation might translate to in the context of language learning - how we define the reward for example - and to imagine how a learning session could be modelled by the equations.
+
+***
+# Relating the Equations to the Language Learning Context - Defining the Notation
+## Action
+
+An action must result in choosing a learning item for a student to be presented with. For a language course there could be thousands of learning items, and presenting each of them could represent one action. However, typical reinforcement learning applications tend to have a small action space e.g. video games may be limited to up-down-left-right.  
+
+Remember that for each action we have to be able to estimate the reward for each state and the probability of transitioning to each state from each state. Making these estimates reasonably accurately may be impossible until an unfeasibly large amount of data has been collected unless we do something to mitigate the number of possible actions.  
+
+One solution is to make actions more generic, such that a word is determined by taking an action, e.g.
+
+* Pick new word with $\Bbb E(S_w)<2$ (to increase $|\Bbb W|$)
+* Pick previously presented word with $\Bbb E(S_w)<2$ (to increase $|\Bbb W|$)
+* Pick understood word with $\min(P(S_w))$ (to increase $\sum_{w \in {\Bbb W}} P(S)$)
+* Pick understood word with medium $P(S_w)$ (for encouragement)
+* Where there is little available reward from learning, presenting other types of content may result in positive changes to $V^*(s)$.
+* Remove word from $\Bbb W$
+
+## State
+
+The state of learning progress is potentially even more complex than the set of actions - encompassing the success and failure on all previously attempted learning items.  
+
+To simplify things, we can choose a fixed number of states that capture motivation to continue learning and likeliness to be able to keep increasing fluency, e.g.
+
+* Words added (all time/this session/rate)
+* Correct (this session/rate of change)
+
+The way we choose to define state affects the state value estimate $V^*(s)$. In choosing how to define state, we must consider what factors we want to capture that will allow the algorithm to display given behaviours. For example,  state values are likely to be different for different people who have the same total words added and number correct. To allow for this, we may also want to capture:
+
+* Preference for new material
+* Speed of uptake  
+* Mode preference
   
-##Fluency
+
+## Reward
+
+Reward is the key metric that we want the learner to improve. Overall fluency can be defined as the probability of success on all learning items in the course.  
+
 $$F = \sum_{w \in {\Bbb W}}P(S_w)$$
-Our reward metric is change in fluency which equals the change in the sum of probabilities of getting tasks for all words correct if posed now.  
-  
 
-$P(s_w)$ is modelled as an exponential decay since last asked (correctly answered?)
-$t_w$: time since word last asked (correctly?)   
-$\delta_w$: decay factor for this word  
+where:
+
+* $P(s_w)$: probability of success at task for this word  
+* ${\Bbb W}$: words in users current vocab  
+* $S$: success at task  
+* $F$: fluency  
+
+
+The reward metric should relate to a given time step, so our reward metric is change in fluency which equals the change in the sum of probabilities of success in all tasks for the given time step. The probability of success for one word is:  
+  
 $$P(s_w) = e^{t_w\delta_w}$$
-where $\delta$ evaluates to a negative. Each word for each pesron will have its own decay factor. The goal of the algorithm is to get to a large set of words (vocab and grammatical learning items) ${\Bbb W}$, each with a somewhat flat decay curve (small $d$).
-```{r, echo=FALSE}
+where:
+
+* $P(s_w)$ is modelled as an exponential decay since last asked (correctly answered?)
+* $t_w$: time since word last asked (correctly?)   
+* $\delta_w$: decay factor for this word  
+
+Each word for each person will have its own decay factor. The goal of the reinforcement learning algorithm then is to get to a large set of words (vocab and grammatical learning items) ${\Bbb W}$, each with a somewhat flat decay curve (small $d$).
+```{r, echo=FALSE, warning=FALSE}
 t <- rep(seq(1,100),2)
 d <- c(rep(-0.05,100), rep(-0.001,100))
 df <- data.frame(t,d)
@@ -50,24 +122,23 @@ ggplot(df, (aes(y=p, x=t))) + geom_line() + facet_grid(. ~ d) +
   ggtitle("Decay of P(s) for different values of decay factor d")
 
 ```
-##Probability of success model
-$\delta$ can be derived from a GLM (binomial family, log link) where only second order factors and time are included and the intercept term is excluded.
+
+#### Forgetting Model
+So our reward metric requires that we define a probability of success model 
+$$P(s_w) = e^{t_w\delta_w}$$
+$\delta$ can be derived from a GLM (binomial family, log link) where only second order factors and time are included and the intercept term is excluded. This model implies that $P(S)=1$ when the material has just been presented.
 $$P(s) = e^{t(ax_1 + bx_2 + c)}$$  
 
-Building the model this way implies that $P(S)=1$ when the material has just been presented 
+The factors in the forgetting model should relate to a particular word and a particular person. For example
 
-The model is trained over the population
-
-Potential factors:
-* N success
-* N failure
-* Difficulty given the other words the user knows  
+* Number of times person has succeeded at this word
+* Number of times person has failed at this word
+* Difficulty factor given the other words the user knows
   
-  The latter may change based on other words presented - we will want a method to reduce the amount of extra calculation this involves.
 
-##Change in fluency
-The reward for a single step (i.e. question/piece of content presented) is change in fluency $\Delta F$.
-```{r, echo=FALSE}
+#### Change in Fluency
+The reward for a single step (i.e. question/piece of content presented) is change in fluency $\Delta F$. $P(S)$ changes with time, so the change in fluency depends on the $\Delta$ and $t$ of all the decay curves of all the words not presented as well as that which is presented.  
+```{r, echo=FALSE, warning=FALSE}
 ggplot(df %>% filter(d==-0.05 & t<=50), (aes(y=p, x=t))) + geom_line() + 
   scale_x_continuous(breaks=c(0,25,50), labels = c("t0","t1","t2")) +
   geom_segment(aes(x = 25, y = 0, xend = 25, yend = 0.2865048),linetype="dotted", colour="red") + 
@@ -76,7 +147,7 @@ ggplot(df %>% filter(d==-0.05 & t<=50), (aes(y=p, x=t))) + geom_line() +
   geom_segment(aes(x = 0, y = 0.082085, xend = 50, yend = 0.082085),linetype="dashed", colour="blue") + 
   ggtitle("Change in P(s) over time")
 ```
-$P(S)$ changes with time, so the change in fluency depends on the $\Delta$ and $t$ of all the decay curves of all the words not presented as well as that which is presented.  
+
 $t0_w$: time word was last presented  
 $t1_w$: last time step   
 $t2_w$: now
@@ -87,9 +158,15 @@ The sum decay loss is: $$\sum_{w \in {\Bbb W}} e^{t2_w\delta_w} - e^{t1_w\delta_
 If we assume that $P(S)=1$ at $t0$, the contribution of the chosen word $w_c$ to $\Delta F$ is $1-P(Sw_c)$  
 Under the same assumption, adding a new word to ${\Bbb W}$ adds 1 to $\Delta F$.
 
-Under this assumption then: $$\Delta F = [\sum_{w \in {\Bbb W  -w_c}} P(S_w)] + 1  - P(Sw_c) + \Delta |{\Bbb W}|$$
+Under this assumption then: $$\Delta F = [\sum_{w \in {\Bbb W  -w_c}} P(S_w)] + 1  - P(Sw_c) + \Delta |{\Bbb W}|$$  
 
-##Accounting for understanding / probability of success for new words
+That is to say, the fluency change descreases according to the decay of all the words not chosen. It increases with the word that is chosen (increasing the most for the words nearest to the bottom of the decay curve). It also increases if a new word is successfully introduced.  
+
+We can start to intuit how an algorithm based on this function might prioritise words to present to the user. For example
+
+
+***
+## Accounting for understanding / probability of success for new words
 In our fluency change equation we assume that the probability of getting a word right the moment after it is presented is $\sim 1$. This is a close enough approximation if the word has been understood - but new words have not yet been understood, and some words may only be partially understood. We need a way of choosing which new words to present next. Further, we need a way of modelling fluency for words which are not yet forgotten because they are only partially understood.  
 
 On first presentation $P(U_w)=0$. For the very first word presented to a user we want to present one that stands a good chance of being understood *soon* so we want to capture the fact that attempting a word that has a good chance of being understood is a step towards fluency. With our definition of fluency this is not directly possible - but given that we want to reflect future fluency we can ensure that it can be captured by the state value $V^*(s)$.  
@@ -102,7 +179,7 @@ So how do we model $P(U)$?
 
 $\Bbb E(S_w)$ is the expected number of additional consecutive presentations of a word for it to become understood. This model should be able to capture the unlikeliness of a difficult word to be understood merely through repeated presentation (e.g. a long sentence composed of unfamiliar words). 
 
-####Introducing new content
+#### Introducing new content
 ```{r, echo=FALSE}
 grViz("digraph rmarkdown {
 '1st Presenation' -> Guess
@@ -118,56 +195,45 @@ Being in ${\Bbb W}$ is effectively a heuristic for $P(U_w)=1$.
 
 We have a model $\Bbb E(S_w)$, so we can use some cutoff $P(U_w=1|{\Bbb W}) > c$.
 
-####Suppressing content that was presented prematurely
+#### Suppressing content that was presented prematurely
 We need some mechanism to remove terms that the user is not ready for. The removal itself can be performed as an action since the aim is to avoid annoying the user by presenting them with a term they don't yet have the basis of an understanding for. The particular word the action chooses can be based on $max\Bbb E(S_w)$.
 
 
-##Other
+## Other
 Fluency metric could be weighted by common-ness of words/grammatical forms in a language.
-
+Words can be presented in different ways - do we need to take into account learning modes?  
 ***
 
-#Expected reward model
+# Expected reward model
 
 ***  
 ***
-#Defining Action
-Words can be presented in different ways - do we need to take into account learning modes?  
 
-Possible actions:
-Pick new word with $\Bbb E(S_w)<2$ (to increase $|\Bbb W|$)  
-Pick previously presented word with $\Bbb E(S_w)<2$ (to increase $|\Bbb W|$)  
-Pick understood word with $\min(P(S_w))$ (to increase $\sum_{w \in {\Bbb W}} P(S)$)  
-Pick understood word with medium $P(S_w)$ (for encouragement)  
-Where there is little available reward from learning, presenting other types of content may result in positive changes to $V^*(s)$.  
-Remove word from $\Bbb W$
+
+# Models we need to build
+Reminder of the essential equations:
+* $Q^*(s,a) = R(s,a) + \gamma \sum_{s' \in {\Bbb S}} P(s'|s,a)V^*(s')$  
+* $\pi^*(s) = argmax Q^*(s,a)$  
+
+These call on us to define:
+* $P(s'|s,a)$
+    + A state transition model to define the probability of changing from each state to each other state
+* ${\Bbb E}_{(R|s,a)}$  
+    + An expected reward model to define the expected affect on our chosen reward metric of each possible state and actoin
+* $V^*(s)$
+    + A state value model, which is arrived at by iterating over actions and state transitions
+***
+
+### State transition model
+
+***
+# Exploration vs. Exploitation
 
 ***
 
-#Defining State
-We need a fixed number of states that capture happiness to continue learning and likeliness to be able to keep increasing fluency, e.g.
-* Words added (all time/this session/rate)
-* Correct (this session/rate of change)
+# Putting it together
 
-The value of a given state $V^*(s)$ is likely to be different for different people. People may differ in these ways for example:
-* Preference for new material
-* Speed of uptake  
-* Mode preference
-  
-We can capture this by allowing the state to capture difference in people. This allows for people to change and for us to estimate the likelihood of that happening.
-
-***
-
-#State transition model
-
-***
-#Exploration vs. Exploitation
-
-***
-
-#Putting it together
-
-###Offline Training
+### Offline Training
 
 * Build probability of success model
 * Build expected reward model
@@ -175,7 +241,7 @@ We can capture this by allowing the state to capture difference in people. This 
 * Find $V(s \in S)$ by performing value iteration.
   + This requires a finite number of states and actions
 
-###Inference
+### Inference
 * At each step, for each user:
 * The user's state $s$ is known, therefore $V(s)$ is also known.
 * Score the probability of success model for each word $\delta$ won't have changed for all but one word, but $t$ will have.
@@ -183,7 +249,8 @@ We can capture this by allowing the state to capture difference in people. This 
 * To find $Q^*(a|s)$, iterate over available actions, plugging them into the reward and state transition models.
   + Expected success plays a part in expected reward and probable state transition. We need to infer expected success for each word for each user for each step! However, the processing burden is relieved in part by the fact that the decay factor $\delta$ only changes for words that have been presented and for which we are calculating difficulty.
 
-###Metrics
-One of the benefits of being clear about what are good states to be in is that we can start to understand the extent to which those states are possible given the available actions. 
+### Metrics
+One of the benefits of being clear about what are good states to be in is that we can start to understand the extent to which those states are possible given the available actions.  
+
 * Assign each user a $S$ and ${\Bbb W}$
 * Find cases where chosen action not available. Describe $S$ and ${\Bbb W}$ for those users.
